@@ -18,7 +18,7 @@
 </head>
 <body>
 	<div class="l_err" style="width: 100%; margin-top: 2px;"></div>
-	<form id="form" name="form" class="form-horizontal" method="post" action="${ctx}/user/editPassword.shtml">
+	<form id="formUpdatePwd" name="form" class="form-horizontal" method="post" action="${ctx}/user/editPassword.shtml">
 		<input type="hidden" class="form-control checkacc" value="${userSession.id}" name="userFormMap.id" id="id">
 		<input type="hidden" class="form-control checkacc" value="${userSession.accountName}" name="userFormMap.accountName" id="accountName">
 		<input type="hidden" class="form-control checkacc" value="${userSession.password}" name="userFormMap.password" id="password">
@@ -27,14 +27,14 @@
 				<div class="form-group">
 					<label class="col-sm-3 control-label">新密码</label>
 					<div class="col-sm-9">
-						<input type="text" class="form-control" placeholder="请输入新密码" name="userFormMap.newpassword" id="newpassword" >
+						<input  type="password" class="form-control" placeholder="请输入新密码" name="userFormMap.newpassword" id="newpassword" >
 					</div>
 				</div>
 				<div class="line line-dashed line-lg pull-in"></div>
 				<div class="form-group">
 					<label class="col-sm-3 control-label">确认密码</label>
 					<div class="col-sm-9">
-						<input type="text" class="form-control" placeholder="请输入确认密码" name="userFormMap.confirmpassword" id="confirmpassword" >
+						<input  type="password" class="form-control" placeholder="请输入确认密码" name="userFormMap.confirmpassword" id="confirmpassword" >
 					</div>
 				</div>
 			</div>

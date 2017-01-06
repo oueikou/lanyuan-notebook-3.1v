@@ -20,10 +20,28 @@ $(function() {
 					name : "模块",
 					isSort:true
 				}, {
+					colkey : "accountName",
+					name : "账号",
+					isSort:true
+				}, {
+					colkey : "module",
+					name : "模块",
+					isSort:true
+				}, {
 					colkey : "methods",
 					name : "方法",
 					isSort:true
 				}, {
+					colkey : "actionTime",
+					name : "响应时间",
+					width : "150px",
+					isSort:true
+				} , {
+					colkey : "actionTime",
+					name : "响应时间",
+					width : "150px",
+					isSort:true
+				} , {
 					colkey : "actionTime",
 					name : "响应时间",
 					width : "150px",
@@ -44,6 +62,7 @@ $(function() {
 					name : "执行描述"
 				}],
 				localData:localData,
+				width:1200,
 				//jsonUrl : rootPath + '/log/findByPage.shtml',
 				local:true,//支持本地数据前端分页
 				checkbox : false

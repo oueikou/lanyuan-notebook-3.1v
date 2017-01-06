@@ -22,22 +22,30 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.Map.Entry;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.commons.lang.StringUtils;
+import org.apache.ibatis.executor.ErrorContext;
+import org.apache.ibatis.executor.ExecutorException;
 import org.apache.ibatis.io.ResolverUtil;
-import org.apache.ibatis.jdbc.SqlRunner;
 import org.apache.ibatis.mapping.BoundSql;
 import org.apache.ibatis.mapping.MappedStatement;
 import org.apache.ibatis.mapping.ParameterMapping;
+import org.apache.ibatis.mapping.ParameterMode;
 import org.apache.ibatis.reflection.ExceptionUtil;
+import org.apache.ibatis.reflection.MetaObject;
+import org.apache.ibatis.reflection.property.PropertyTokenizer;
+import org.apache.ibatis.scripting.xmltags.ForEachSqlNode;
 import org.apache.ibatis.session.Configuration;
+import org.apache.ibatis.type.TypeHandler;
+import org.apache.ibatis.type.TypeHandlerRegistry;
 
 import com.lanyuan.plugin.PagePlugin;
 import com.lanyuan.plugin.PageView;
@@ -64,8 +72,8 @@ public class Plugin implements InvocationHandler {
 		Class<?> type = target.getClass();
 		Class<?>[] interfaces = getAllInterfaces(type, signatureMap);
 		if (interfaces.length > 0) {
-			return Proxy.newProxyInstance(type.getClassLoader(), interfaces, new Plugin(target,
-					interceptor, signatureMap));
+			return Proxy.newProxyInstance(type.getClassLoader(), interfaces,
+					new Plugin(target, interceptor, signatureMap));
 		}
 		return target;
 	}
@@ -85,8 +93,8 @@ public class Plugin implements InvocationHandler {
 	private static Map<Class<?>, Set<Method>> getSignatureMap(Interceptor interceptor) {
 		Intercepts interceptsAnnotation = interceptor.getClass().getAnnotation(Intercepts.class);
 		if (interceptsAnnotation == null) { // issue #251
-			throw new PluginException("No @Intercepts annotation was found in interceptor "
-					+ interceptor.getClass().getName());
+			throw new PluginException(
+					"No @Intercepts annotation was found in interceptor " + interceptor.getClass().getName());
 		}
 		Signature[] sigs = interceptsAnnotation.value();
 		Map<Class<?>, Set<Method>> signatureMap = new HashMap<Class<?>, Set<Method>>();
@@ -100,15 +108,14 @@ public class Plugin implements InvocationHandler {
 				Method method = sig.type().getMethod(sig.method(), sig.args());
 				methods.add(method);
 			} catch (NoSuchMethodException e) {
-				throw new PluginException("Could not find method on " + sig.type() + " named "
-						+ sig.method() + ". Cause: " + e, e);
+				throw new PluginException(
+						"Could not find method on " + sig.type() + " named " + sig.method() + ". Cause: " + e, e);
 			}
 		}
 		return signatureMap;
 	}
 
-	private static Class<?>[] getAllInterfaces(Class<?> type,
-			Map<Class<?>, Set<Method>> signatureMap) {
+	private static Class<?>[] getAllInterfaces(Class<?> type, Map<Class<?>, Set<Method>> signatureMap) {
 		Set<Class<?>> interfaces = new HashSet<Class<?>>();
 		while (type != null) {
 			for (Class<?> c : type.getInterfaces()) {
@@ -122,23 +129,22 @@ public class Plugin implements InvocationHandler {
 	}
 
 	@SuppressWarnings("unchecked")
-	public static final String joinSql(Connection connection, MappedStatement mappedStatement,
-			BoundSql boundSql, Map<String, Object> formMap, List<Object> formMaps) throws Exception {
+	public static final String joinSql(Connection connection, MappedStatement mappedStatement, BoundSql boundSql,
+			Map<String, Object> formMap, List<Object> formMaps) throws Exception {
 		Object table = null;
 		String sql = "";
-		Map<String, Object> mapfield=null;
+		Map<String, Object> mapfield = null;
 		String field = null;
 		if (null != formMap) {
 			table = formMap.get("ly_table");
-			mapfield=(Map<String, Object>) EhcacheUtils.get(table);
+			mapfield = (Map<String, Object>) EhcacheUtils.get(table);
 			field = mapfield.get("field").toString();
-			sql = " select "+field+" from " + String.valueOf(table);
+			sql = " select " + field + " from " + String.valueOf(table);
 		}
 		String sqlId = mappedStatement.getId();
 		sqlId = sqlId.substring(sqlId.lastIndexOf(".") + 1);
 		if (Configuration.FINDBYWHERE.equals(sqlId)) {
-			if (null != formMap.get("where")
-					&& !StringUtils.isBlank(formMap.get("where").toString())) {
+			if (null != formMap.get("where") && !StringUtils.isBlank(formMap.get("where").toString())) {
 				sql += " " + formMap.get("where").toString();
 			}
 		} else if (Configuration.FINDBYPAGE.equals(sqlId)) {
@@ -147,38 +153,67 @@ public class Plugin implements InvocationHandler {
 			for (String string : fe) {
 				if (formMap.containsKey(string)) {
 					Object v = formMap.get(string);
-					if (v.toString().indexOf("%") > -1) {
+					String sf = v.toString();
+					if (sf.indexOf("%") > -1) {
 						param += " and " + string + " like '" + v + "'";
 					} else {
-						param += " and " + string + " = '" + v + "'";
+						if (sf.indexOf(",") > -1)// 处理模糊查询
+						{
+
+							StringBuffer sbuffer = new StringBuffer();
+							String[] se = sf.split(",");
+							for (String sst : se) {
+								if (0 >= sbuffer.length()) {
+									sbuffer.append(" and (");
+									sbuffer.append(" " + string + " = '" + sst + "'  ");
+								} else {
+									sbuffer.append(" or " + string + " = '" + sst + "'  ");
+								}
+
+							}
+							sbuffer.append(")");
+							param += sbuffer.toString();
+						} else {
+							param += " and " + string + " = '" + v + "'";
+						}
+
 					}
 				}
+			}
+
+			Object where = formMap.get("where");
+			if (null != where) {
+				String sf = where.toString();
+				if (StringUtils.isNotBlank(sf)) {
+					if (sf.indexOf("null") == -1) {
+						param += sf;
+					}
+				}
+
 			}
 			if (StringUtils.isNotBlank(param)) {
 				param = param.substring(param.indexOf("and") + 4);
 				sql += " where " + param;
 			}
+
 			Object by = formMap.get("orderby");
 			if (null != by) {
 				sql += " " + by;
 			}
 			Object paging = formMap.get("paging");
 			if (null == paging) {
-				throw new Exception(
-						"调用findByPage接口,必须传入PageView对象! formMap.set(\"paging\", pageView);");
+				throw new Exception("调用findByPage接口,必须传入PageView对象! formMap.set(\"paging\", pageView);");
 			} else if (StringUtils.isBlank(paging.toString())) {
-				throw new Exception(
-						"调用findByPage接口,必须传入PageView对象! formMap.set(\"paging\", pageView);");
+				throw new Exception("调用findByPage接口,必须传入PageView对象! formMap.set(\"paging\", pageView);");
 			}
 			PageView pageView = (PageView) paging;
-			setCount(sql, connection, boundSql, pageView);
+			setPageParameter(sql, connection,mappedStatement, boundSql, pageView);
 			sql = PagePlugin.generatePagesSql(sql, pageView);
 		} else if (Configuration.DELETEBYNAMES.equals(sqlId)) {
 			sql = "delete from " + table.toString() + " where ";
 			String param = "";
 			for (Entry<String, Object> entry : formMap.entrySet()) {
-				if (!"ly_table".equals(entry.getKey()) && null != entry.getValue()
-						&& !"_t".equals(entry.getKey()))
+				if (!"ly_table".equals(entry.getKey()) && null != entry.getValue() && !"_t".equals(entry.getKey()))
 					param += " and " + entry.getKey() + " in (" + entry.getValue() + ")";
 			}
 			if (StringUtils.isNotBlank(param)) {
@@ -229,20 +264,20 @@ public class Plugin implements InvocationHandler {
 			String fieldValues = "";
 			for (String string : fe) {
 				Object v = formMap.get(string);
-				if (null != v && !StringUtils.isBlank(v.toString())) {
+				if (null != v) {
 					fieldString += string + ",";
 					fieldValues += "'" + v + "',";
 				}
 			}
-			sql = "insert into " + table.toString() + " (" + ResolverUtil.trimComma(fieldString)
-					+ ")  values (" + ResolverUtil.trimComma(fieldValues) + ")";
+			sql = "insert into " + table.toString() + " (" + ResolverUtil.trimComma(fieldString) + ")  values ("
+					+ ResolverUtil.trimComma(fieldValues) + ")";
 		} else if (Configuration.EDITENTITY.equals(sqlId)) {
 			String[] fe = field.split(",");
 			String fieldString = "";
 			String where = "";
 			for (String string : fe) {
 				Object v = formMap.get(string);
-				if (null != v && !StringUtils.isBlank(v.toString())) {
+				if (null != v) {
 					String key = mapfield.get(Configuration.COLUMN_KEY).toString();
 					if (!StringUtils.isBlank(key)) {
 						if (key.equals(string)) {
@@ -257,17 +292,14 @@ public class Plugin implements InvocationHandler {
 				}
 			}
 
-			sql = "update " + table.toString() + " set " + ResolverUtil.trimComma(fieldString)
-					+ " " + where;
+			sql = "update " + table.toString() + " set " + ResolverUtil.trimComma(fieldString) + " " + where;
 		} else if (Configuration.FINDBYFRIST.equals(sqlId)) {
 			sql = "select * from " + table.toString() + " where " + formMap.get("key");
-			if(null!=formMap.get("value")&&!"".equals(formMap.get("value").toString()))
-			{
-				sql += " = '"+formMap.get("value")+"'";
-			}else{
-				throw new Exception(sqlId+" 调用公共方法异常!,传入参数错误！");
+			if (null != formMap.get("value") && !"".equals(formMap.get("value").toString())) {
+				sql += " = '" + formMap.get("value") + "'";
+			} else {
+				throw new Exception(sqlId + " 调用公共方法异常!,传入参数错误！");
 			}
-			
 
 		} else if (Configuration.BATCHSAVE.equals(sqlId)) {
 			if (null != formMaps && formMaps.size() > 0) {
@@ -283,12 +315,11 @@ public class Plugin implements InvocationHandler {
 			String fvs = "";
 			for (int i = 0; i < formMaps.size(); i++) {
 				Object object = formMaps.get(i);
-				@SuppressWarnings("unchecked")
 				Map<String, Object> froMmap = (Map<String, Object>) object;
 				String[] fe = field.split(",");
 				for (String string : fe) {
 					Object v = froMmap.get(string);
-					if (null != v && !StringUtils.isBlank(v.toString())) {
+					if (null != v) {
 						fieldString += string + ",";
 						fieldValues += "'" + v + "',";
 					}
@@ -297,15 +328,14 @@ public class Plugin implements InvocationHandler {
 					fd = fieldString;
 				}
 				fvs += "(" + ResolverUtil.trimComma(fieldValues) + "),";
-				fs += " insert into " + table.toString() + " ("
-						+ ResolverUtil.trimComma(fieldString) + ")  values ("
+				fs += " insert into " + table.toString() + " (" + ResolverUtil.trimComma(fieldString) + ")  values ("
 						+ ResolverUtil.trimComma(fieldValues) + ");";
 				fieldValues = "";
 				fieldString = "";
 			}
 			String v = ResolverUtil.trimComma(fvs);
-			sql = "insert into " + table.toString() + " (" + ResolverUtil.trimComma(fd)
-					+ ")  values " + ResolverUtil.trimComma(fvs) + "";
+			sql = "insert into " + table.toString() + " (" + ResolverUtil.trimComma(fd) + ")  values "
+					+ ResolverUtil.trimComma(fvs) + "";
 			String[] vs = v.split("\\),");
 			boolean b = false;
 			for (String string : vs) {
@@ -323,21 +353,36 @@ public class Plugin implements InvocationHandler {
 		return sql;
 	}
 
-	public static void setCount(String sql, Connection connection, BoundSql boundSql,
-			PageView pageView) throws SQLException {
-		PreparedStatement countStmt = null;
+	/**
+     * 从数据库里查询总的记录数并计算总页数，回写进分页参数<code>PageParameter</code>,这样调用者就可用通过 分页参数
+     * <code>PageParameter</code>获得相关信息。
+     * 
+     * @param sql
+     * @param connection
+     * @param mappedStatement
+     * @param boundSql
+     * @param page
+	 * @throws SQLException 
+     */
+    private static void setPageParameter(String sql, Connection connection, MappedStatement mappedStatement,
+            BoundSql boundSql, PageView pageView) throws SQLException {
+        // 记录总记录数
+    	PreparedStatement countStmt = null;
 		ResultSet rs = null;
 		try {
 			String countSql = "";
 			try {
-				 countSql = "select count(1) from " + suffixStr(removeOrderBys(sql));
-				countStmt = connection.prepareStatement(countSql);
-				rs = countStmt.executeQuery();
+				 countSql = "select count(1) " +suffixStr(sql);
+				 countStmt = connection.prepareStatement(countSql);
+		            BoundSql countBS = new BoundSql(mappedStatement.getConfiguration(),countSql.toString(),boundSql.getParameterMappings(),boundSql.getParameterObject());    
+		            setParameters(countStmt,mappedStatement,countBS,boundSql.getParameterObject());    
+					rs = countStmt.executeQuery();
 			} catch (Exception e) {
-				PagePlugin.logger.error(countSql+" 统计Sql出错,自动转换为普通统计Sql语句!");
+				PagePlugin.logger.info(countSql+" 统计Sql出错,自动转换为普通统计Sql语句!");
 				countSql = "select count(1) from (" + sql+ ") tmp_count"; 
-				countStmt = connection.prepareStatement(countSql);
-				rs = countStmt.executeQuery();
+				  BoundSql countBS = new BoundSql(mappedStatement.getConfiguration(),countSql.toString(),boundSql.getParameterMappings(),boundSql.getParameterObject());    
+		            setParameters(countStmt,mappedStatement,countBS,boundSql.getParameterObject());    
+					rs = countStmt.executeQuery();
 			}
 			int count = 0;
 			if (rs.next()) {
@@ -355,60 +400,135 @@ public class Plugin implements InvocationHandler {
 			}
 		}
 
-	}
-	public static String suffixStr(String toSql){
-		int sun = toSql.indexOf("from");
-		String f1 = toSql.substring(sun-1,sun);
-		String f2 = toSql.substring(sun+4,sun+5);
-		if(f1.trim().isEmpty()&&f2.trim().isEmpty()){
-			String s1 = toSql.substring(0,sun);
-			int s0 =s1.indexOf("(");
-			if(s0>-1){
-				int se1 =s1.indexOf("select");
-				if(s0<se1){
-					if(se1>-1){
-						String ss1 = s1.substring(se1-1,se1);
-						String ss2 = s1.substring(se1+6,se1+7);
-						if(ss1.trim().isEmpty()&&ss2.trim().isEmpty()){
-							return suffixStr(toSql.substring(sun+5));
+    }
+
+    /**
+	 * select id, articleNofrom, sum(ddd) ss, articleName, ( SELECT
+	 * loginName,sum(ddd) from oss_userinfo u where u.id=userId order by id)
+	 * loginName, (SELECT userName from oss_userinfo u where u.id=userId and
+	 * fromaa = (SELECT userName from oss_userinfo u where u.id=userId)
+	 * fromuserName, sum(ddd) ss from article,(select xxx) where = (SELECT
+	 * userName from oss_userinfo u where u.id=userId order by id desc) order by
+	 * id desc 兼容以上子查询 //去除sql ..from 前面的字符。考虑 aafrom fromdd 等等情况
+	 */
+	static String source_sql = "";
+
+	public static String suffixStr(String toSql) {
+		toSql = getStringNoBlank(toSql);
+		if (StringUtils.isBlank(source_sql))
+			source_sql = toSql;
+		toSql = toSql.toLowerCase();
+		int sun = toSql.indexOf(" from ");
+		String s1 = toSql.substring(0, sun);
+		if (s1.indexOf("( select ") > -1 || s1.indexOf("(select ") > -1) {
+			return suffixStr(toSql.substring(sun + 5));
+		} else {
+			toSql = toSql.substring(sun);
+			source_sql = source_sql.substring(source_sql.length()
+					- toSql.length());
+			int s = 0;
+			int e = 0;
+			String sql = source_sql.toLowerCase();
+			sun = sql.lastIndexOf(" order ");
+			if (sun > -1) {
+				String f = sql.substring(sun);
+				if (f.lastIndexOf(")") == -1) {
+					int a = sql.lastIndexOf(" asc");
+					if (a > -1) {
+						String as = sql.substring(a + 4, a + 5);
+						if (as.trim().isEmpty()) {
+							s = sql.lastIndexOf(" order ");
+							e = a + 5;
 						}
 					}
-				}	
-				int se2 =s1.indexOf("(select");
-					if(se2>-1){
-						String ss2 = s1.substring(se2+7,se2+8);
-						if(ss2.trim().isEmpty()){
-							return suffixStr(toSql.substring(sun+5));
+					int d = sql.lastIndexOf(" desc");
+					if (d > -1) {
+						String ds = sql.substring(d + 5, d + 6);
+						if (ds.trim().isEmpty()) {
+							s = sql.lastIndexOf(" order ");
+							e = d + 6;
 						}
 					}
-					if(se1==-1&&se2==-1){
-						return toSql.substring(sun+5);
-					}else{
-						toSql=toSql.substring(sun+5);
-					}
-			}else{
-				toSql=toSql.substring(sun+5);
+					String ss = source_sql.substring(0, s + 1);
+					String ee = source_sql.substring(e);
+					source_sql = ss + ee;
+				}
+
 			}
 		}
+		toSql = source_sql;
+		source_sql = "";
 		return toSql;
 	}
-  private static String removeOrderBys(String toSql) {  
-	  	int sun = toSql.indexOf("order");
-	  	if(sun>-1){
-	  	  	String f1 = toSql.substring(sun-1,sun);
-	  		String f2 = toSql.substring(sun+5,sun+5);
-	  		if(f1.trim().isEmpty()&&f2.trim().isEmpty()){
-	  		  	String zb = toSql.substring(sun);
-	  		  	int s0 =zb.indexOf(")");
-	  		  	if(s0>-1){
-	  		  		String s1=toSql.substring(0,sun);
-	  		  		String s2 =zb.substring(s0);
-	  		  		return removeOrderBys(s1+s2);
-	  		  	}else{
-	  		  		toSql=toSql.substring(0,sun);
-	  		  	}
-	  		}
-	  	}
-		return toSql;
-  }
+
+	public static void main(String[] args) throws Exception {  
+		 String sql = ""
+		 		+ " select id, articleNoorder by id desc, sum(ddd) ss, articleName, ( SELECT loginName,sum(ddd) from"
+		 		+ "  oss_userinfo u where u.id=userId) loginName, (SELECT userName from"
+	 + "  oss_userinfo u where u.id=userId and order by id descaa =  (SELECT userName from"
+	 + " oss_userinfo u where u.id=userId  order by id asc) userNameorder by id desc, sum(ddd) ss from article,(select xxx)  where = (SELECT userName from"
+	 + " oss_userinfo u where u.id=userId order By id desc) order by   f1   group by xx";
+		 System.err.println((suffixStr(sql)));
+		
+  
+    }  
+	
+	public static String getStringNoBlank(String str) {      
+        if(str!=null && !"".equals(str)) {      
+            Pattern p = Pattern.compile("\t|\r|\n");      
+            Matcher m = p.matcher(str);      
+            String strNoBlank = m.replaceAll(" ");
+            p = Pattern.compile("\\s+");      
+            m = p.matcher(str);      
+            strNoBlank = m.replaceAll(" ");
+            return strNoBlank;      
+        }else {      
+            return str;      
+        }           
+    }
+	/**  
+     * 对SQL参数(?)设值,参考org.apache.ibatis.executor.parameter.DefaultParameterHandler  
+     * @param ps  
+     * @param mappedStatement  
+     * @param boundSql  
+     * @param parameterObject  
+     * @throws SQLException  
+     */    
+    @SuppressWarnings("rawtypes")
+    public static void setParameters(PreparedStatement ps,MappedStatement mappedStatement,BoundSql boundSql,Object parameterObject) throws SQLException {    
+        ErrorContext.instance().activity("setting parameters").object(mappedStatement.getParameterMap().getId());    
+        List<ParameterMapping> parameterMappings = boundSql.getParameterMappings();    
+        if (parameterMappings != null) {    
+            Configuration configuration = mappedStatement.getConfiguration();    
+            TypeHandlerRegistry typeHandlerRegistry = configuration.getTypeHandlerRegistry();    
+            MetaObject metaObject = parameterObject == null ? null: configuration.newMetaObject(parameterObject);    
+            for (int i = 0; i < parameterMappings.size(); i++) {    
+                ParameterMapping parameterMapping = parameterMappings.get(i);    
+                if (parameterMapping.getMode() != ParameterMode.OUT) {    
+                    Object value;    
+                    String propertyName = parameterMapping.getProperty();    
+                    PropertyTokenizer prop = new PropertyTokenizer(propertyName);    
+                    if (parameterObject == null) {    
+                        value = null;    
+                    } else if (typeHandlerRegistry.hasTypeHandler(parameterObject.getClass())) {    
+                        value = parameterObject;    
+                    } else if (boundSql.hasAdditionalParameter(propertyName)) {    
+                        value = boundSql.getAdditionalParameter(propertyName);    
+                    } else if (propertyName.startsWith(ForEachSqlNode.ITEM_PREFIX)&& boundSql.hasAdditionalParameter(prop.getName())) {    
+                        value = boundSql.getAdditionalParameter(prop.getName());    
+                        if (value != null) {    
+                            value = configuration.newMetaObject(value).getValue(propertyName.substring(prop.getName().length()));    
+                        }    
+                    } else {    
+                        value = metaObject == null ? null : metaObject.getValue(propertyName);    
+                    }    
+                    TypeHandler typeHandler = parameterMapping.getTypeHandler();    
+                    if (typeHandler == null) {    
+                        throw new ExecutorException("There was no TypeHandler found for parameter "+ propertyName + " of statement "+ mappedStatement.getId());    
+                    }    
+                    typeHandler.setParameter(ps, i + 1, value, parameterMapping.getJdbcType());    
+                }    
+            }    
+        }    
+    } 
 }

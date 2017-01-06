@@ -8,9 +8,10 @@
  */
 ;
 (function() {
-	lyGrid = (function(params) {
+	lyGrid = (function(params,callback) {
 		var confs = {
 			l_column : [],
+			dymCol : false,//是否显示动态列
 			pagId : 'paging', // 加载表格存放位置的ID
 			width : '100%', // 表格高度
 			height : '100%', // 表格宽度
@@ -35,6 +36,7 @@
 			treeGrid : {
 				type: 1, //1 表示后台已经处理好父类带children集合 2 表示没有处理,由前端处理树形式
 				tree : false,// 是否显示树
+				hide : false,//默认展开
 				name : 'name',// 以哪个字段 的树形式 如果是多个 name,key
 				id: "id",
 				pid: "pid"
@@ -45,18 +47,14 @@
 			colkey : null,
 			name : null,
 			width : 'auto',
+			theadClass:'',
+			tbodyClass:'',
 			height : 'auto',
 			align : 'center',
 			hide : false,
 			isSort:false,
 			renderData : null
 		// 渲染数据function( rowindex ,data, rowdata, colkey)
-		};
-		var l_treeGrid = {
-			tree : false,// 是否显示树
-			name : 'name',// 以哪个字段 的树形式
-			id: "id",
-			pid: "pid"
 		};
 		var conf = $.extend(confs, params);
 		var l_tree = conf.treeGrid;
@@ -74,6 +72,9 @@
 		var column = conf.l_column;
 		var init = function() {
 			createHtml();
+			//fixhead();
+			if(callback)
+				callback(this);//回调函数 column 字段名,当前界面的数据 currentData
 		};
 		var extend = function(o, n, override) {
 			for ( var p in n)
@@ -103,7 +104,7 @@
 						json = data;
 					},
 					error : function(msg) {
-						alert("列表数据异常！");
+						alert("系统暂无数据！");
 						json = '';
 					}
 				});
@@ -121,7 +122,7 @@
 			var id = conf.pagId;
 			divid = typeof (id) == "string" ? document.getElementById(id) : id;
 			if (divid == "" || divid == undefined || divid == null) {
-				console.error("找不到 id= " + id + " 选择器！");
+				//console.error("找不到 id= " + id + " 选择器！");
 				return;
 			}
 
@@ -190,9 +191,10 @@
 			chkbox.onclick = checkboxbind.bind();
 			cth.appendChild(chkbox); // 第一列添加复选框
 			tr.appendChild(cth);
-			$.each(column, function(o) {
+			$.each(column, function(i,o) {
 				if (!column[o].hide || column[o].hide == undefined) {
 					var th = document.createElement('th');
+					th.className=column[o].theadClass;
 					th.setAttribute("style", "text-align:" + column[o].align + ";width: " + column[o].width + ";height:" + conf.theadHeight + ";vertical-align: middle;");
 					if(column[o].isSort){
 						th.innerHTML = column[o].name+'<span class="wj-glyph-up"></span>';
@@ -257,8 +259,8 @@
 				cth.appendChild(chkbox); // 第一列添加复选框
 				tr.appendChild(cth);
 				$.each(column, function(o) {
-					if (!column[o].hide || column[o].hide == undefined) {
 						var th = document.createElement('th');
+						th.className=column[o].theadClass;
 						var at = "text-align:" + column[o].align + ";width: " + column[o].width + ";height:" + conf.theadHeight + ";vertical-align: middle;";
 						if(column[o].isSort){
 							th.innerHTML = column[o].name+'<span class="wj-glyph-up" title="'+column[o].colkey+',asc"></span>';
@@ -267,13 +269,25 @@
 						}else{
 							th.innerHTML = column[o].name;
 						}
+						
+						if (column[o].hide==true)
+							at+="display:"+(column[o].hide ? 'none':'block');
 						th.setAttribute("style", at);
+						
 						tr.appendChild(th);
-					}
 				});
+				if(conf.dymCol){
+					var ico = document.createElement("i");// 1.创建一个i表
+					ico.className = "fa fa-thumb-tack";
+					ico.setAttribute("style", "float: right;margin-top: 3px;");
+					ico.onclick = dmycol.bind();
+					tr.lastChild.appendChild(ico);
+				}
 			}
 
 		};
+		
+		var currentData;//当前页数据
 		var cBodytb = function(divId,jsonData){
 			$('#'+divId.id+' table > tbody').remove() ;
 			$('#'+divId.id+' div:eq(1)').remove() ;
@@ -287,13 +301,15 @@
 				d = (pNow - 1) *conf.pageSize;
                 var e = pNow * conf.pageSize - 1;
 			}
-
-			for(;d<=e;d++){
-				if(CommnUtil.notNull(json[d])){
+			currentData = new Array();//当前页数据
+			for(;d<e;d++){
+				var rowdata = json[d];
+				currentData.push(rowdata);
+				if(CommnUtil.notNull(rowdata)){
 					var tr = document.createElement('tr');
 					tr.setAttribute("style", "line-height:" + conf.tbodyHeight + ";");
-					var sm = parseInt(tee.substring(tee.length-1),10)+1;
-					tee=tee.substring(0,tee.length-2);
+					var sm = parseInt(tee.substring(tee.lastIndexOf("-")+1),10)+1;
+					tee=tee.substring(0,tee.lastIndexOf("-"));
 					tee=tee+"-"+sm;
 					tr.setAttribute("d-tree", tee);
 					tbody.appendChild(tr);
@@ -315,19 +331,18 @@
 					var chkbox = document.createElement("INPUT");
 					chkbox.type = "checkbox";
 					// ******** 树的上下移动需要
-					chkbox.setAttribute("cid", _getValueByName(json[d], l_tree.id));
-					chkbox.setAttribute("pid", _getValueByName(json[d], l_tree.pid));
+					chkbox.setAttribute("cid", _getValueByName(rowdata, l_tree.id));
+					chkbox.setAttribute("pid", _getValueByName(rowdata, l_tree.pid));
 					// ******** 树的上下移动需要
 					chkbox.setAttribute("_l_key", "checkbox");
-					chkbox.value = _getValueByName(json[d], conf.checkValue);
+					chkbox.value = _getValueByName(rowdata, conf.checkValue);
 					chkbox.onclick = highlight.bind(this);
 					td_d.appendChild(chkbox); // 第一列添加复选框
 					$.each(column, function(o) {
-						if (!column[o].hide || column[o].hide == undefined) {
 							var td_o = tr.insertCell(-1);
-							td_o.setAttribute("style", "text-align:" + column[o].align + ";width: " + column[o].width + ";vertical-align: middle;word-break: keep-all;white-space: nowrap;overflow: hidden;text-overflow: ellipsis;");
+							td_o.className=column[o].tbodyClass;
+						     var at="text-align:" + column[o].align + ";width: " + column[o].width + ";vertical-align: middle;word-break: keep-all;white-space: nowrap;overflow: hidden;text-overflow: ellipsis;";
 
-							var rowdata = json[d];
 							var clm = column[o].colkey;
 							var data = CommnUtil.notEmpty(_getValueByName(rowdata, clm));
 
@@ -338,7 +353,10 @@
 									divtree.className = "ly_tree";
 									divtree.setAttribute("style", "padding-top:5px;margin-left:5px;text-align:" + column[o].align + ";");
 									var img = document.createElement('img');
-									img.src=rootPath+"/images/tree/nolines_minus.gif";
+									if(l_tree.hide||l_tree.hide!=undefined)
+										img.src=rootPath+"/images/tree/nolines_plus.gif";
+									else
+										img.src=rootPath+"/images/tree/nolines_minus.gif";
 									img.onclick=datatree.bind();
 									divtree.appendChild(img);
 									td_o.appendChild(divtree);
@@ -368,12 +386,14 @@
 								}
 							}
 							;
-						}
+							if (column[o].hide==true)
+								at+="display:"+(column[o].hide ? 'none':'block');
+							td_o.setAttribute("style", at);
 					});
 					if (l_tree.tree){
 						if(l_tree.type==1){
 							tee=tee+"-0";
-							treeHtml(tbody, json[d]);// 树形式
+							treeHtml(tbody, rowdata);// 树形式
 						}else {
 							var obj = json[d];
 							delete json[d];
@@ -533,9 +553,11 @@
 						tte=true;
 					}
 					var tr = document.createElement('tr');
-					tr.setAttribute("style", "line-height:" + conf.tbodyHeight + ";");
-					var sm = parseInt(tee.substring(tee.length-1),10)+1;
-					tee=tee.substring(0,tee.length-2);
+					if(l_tree.hide||l_tree.hide!=undefined)
+						di = 'display: none;';
+					tr.setAttribute("style", "line-height:" + conf.tbodyHeight + ";"+di);
+					var sm = parseInt(tee.substring(tee.lastIndexOf("-")+1),10)+1;
+					tee=tee.substring(0,tee.lastIndexOf("-"));
 					tee=tee+"-"+sm;
 					tr.setAttribute("d-tree", tee);
 					tbody.appendChild(tr);
@@ -619,7 +641,7 @@
 					}
 
 				});
-				tee=tee.substring(0,tee.length-2);
+				tee=tee.substring(0,tee.lastIndexOf("-"));
 				nb = 20;
 			}
 		};
@@ -634,9 +656,11 @@
 						if(jsb==ob){
 							tte = true;
 							var tr = document.createElement('tr');
-							tr.setAttribute("style", "line-height:" + conf.tbodyHeight + ";");
-							var sm = parseInt(tee.substring(tee.length-1),10)+1;
-							tee=tee.substring(0,tee.length-2);
+							if(l_tree.hide||l_tree.hide!=undefined)
+								di = 'display: none;';
+							tr.setAttribute("style", "line-height:" + conf.tbodyHeight + ";"+di);
+							var sm = parseInt(tee.substring(tee.lastIndexOf("-")+1),10)+1;
+							tee=tee.substring(0,tee.lastIndexOf("-"));
 							tee=tee+"-"+sm;
 							tr.setAttribute("d-tree", tee);
 							tbody.appendChild(tr);
@@ -721,7 +745,7 @@
 					if(CommnUtil.notNull(img))
 						img.remove(img.selectedIndex);
 				}
-				tee=tee.substring(0,tee.length-2);
+				tee=tee.substring(0,tee.lastIndexOf("-"));
 				nb = parseInt(nb,10) - 20;;
 		};
 		Array.prototype.ly_each = function(f) { // 数组的遍历
@@ -1026,7 +1050,13 @@
 		 * 查询时，设置参数查询
 		 */
 		var setOptions = function(params) {
+			var data;
+			if(params.data){
+				data=$.extend(conf.data, params.data);
+				params.data=data;
+			}
 			$.extend(conf, params);
+			conf.data.pageNow=1;
 			replayData();
 		};
 		/**
@@ -1063,7 +1093,9 @@
 			 });
 			 return ret;
 		};
-		
+		var getColumn = function(){
+			return column;
+		};
 		var exportData = function(url){
 			var form=$("<form>");//定义一个form表单
 			form.attr("style","display:none");
@@ -1088,8 +1120,50 @@
 				form.append(input1);
 			}
 			form.submit();//表单提交 
-		}
-		
+		};
+		var getCurrentData = function(){
+			return currentData;
+		};
+		var dmycolcheck = function(e){
+			var u = $(e.target).attr("span_value");
+			if($(e.target).attr("class").indexOf("checked")==-1){
+				$(e.target).addClass("checked");
+				$(divid).find('table:eq(0) tr th:nth-child('+(parseInt(u,10)+3)+')').hide();
+				$(divid).find('table:eq(0) tr td:nth-child('+(parseInt(u,10)+3)+')').hide();
+			}
+			else{
+				$(e.target).removeClass("checked");
+				$(divid).find('table:eq(0) tr th:nth-child('+(parseInt(u,10)+3)+')').show();
+				$(divid).find('table:eq(0) tr td:nth-child('+(parseInt(u,10)+3)+')').show();
+			}
+		};
+		var dmycol = function(e){
+			if($('#ul_dmycol').length > 0){
+				$('#ul_dmycol').toggle();
+			}else{
+				var ul = document.createElement("ul");
+				ul.className = "dmycol-menu";
+				ul.id="ul_dmycol";
+				$.each(column, function(i,o) {
+					var li = document.createElement("li");//
+					var spanbox = document.createElement("span");
+					if (o.hide==true)
+						spanbox.className = "span_checkbox checked";
+					else
+						spanbox.className = "span_checkbox";
+					spanbox.setAttribute("span_value", i);
+					spanbox.name=o.colkey;
+					spanbox.onclick=dmycolcheck.bind();
+					li.appendChild(spanbox);
+					var sp = document.createElement("span");//
+					sp.innerHTML=" "+o.name;
+					li.appendChild(sp);
+					ul.appendChild(li);
+				});
+				e.target.parentNode.insertBefore(ul,null);
+			}
+			
+		};
 		init();
 
 		return {
@@ -1100,9 +1174,11 @@
 			selectTreeRow : selectTreeRow,
 			lyGridUp : lyGridUp,//上移
 			lyGridDown : lyGridDown,//下移
-			rowline : rowline,//
+			rowline : rowline,
 			resultJSONData : jsonRequest,//返回列表的所有json数据
-			exportData:exportData//导出数据
+			exportData:exportData,//导出数据
+			getColumn :getColumn,//获取表头
+			getCurrentData:getCurrentData//获取表格的当前页json数据
 		};
 	});
 })();
@@ -1122,4 +1198,5 @@ var fixhead = function() {
 	 */
 };
 $(window).resize(function() {
+	//fixhead();
 });
